@@ -1,0 +1,75 @@
+name: CI 313552054
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Prettier format check
+        run: npm run format:check
+
+      - name: Run tests and collect JUnit report
+        run: |
+          mkdir -p reports
+          npm test -- --reporter=default --reporter=junit --outputFile=reports/vitest-junit.xml
+
+      - name: Upload test report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-report
+          path: reports/vitest-junit.xml
+          if-no-files-found: error
+
+      - name: Publish Vitest summary to workflow page
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          report_path = 'reports/vitest-junit.xml'
+          if not os.path.exists(report_path):
+              print('No JUnit report found')
+              raise SystemExit(0)
+
+          tree = ET.parse(report_path)
+          root = tree.getroot()
+          suite = root.find('.//testsuite') or root
+
+          tests = int(suite.attrib.get('tests', 0))
+          failures = int(suite.attrib.get('failures', 0))
+          errors = int(suite.attrib.get('errors', 0))
+          skipped = int(suite.attrib.get('skipped', suite.attrib.get('disabled', 0)))
+
+          summary = (
+              f'## Vitest Results\n'
+              f'- Tests: {tests}\n'
+              f'- Failures: {failures}\n'
+              f'- Errors: {errors}\n'
+              f'- Skipped: {skipped}\n'
+          )
+
+          print(summary)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as fh:
+              fh.write(summary)
+          PY
